@@ -296,31 +296,105 @@ const RunnerInterface = () => {
   );
 };
 
-// Main component that renders the appropriate interface
+// Main component that determines the interface based on user type
 const LocationTracker = () => {
-  const [selectedInterface, setSelectedInterface] = useState(null);
+  const [userType, setUserType] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  if (!selectedInterface) {
+  useEffect(() => {
+    const checkUserType = async () => {
+      try {
+        const userId = auth.currentUser?.uid;
+        console.log('Current user ID:', userId); // Debug log
+
+        if (!userId) {
+          console.log('No authenticated user found'); // Debug log
+          setError('No authenticated user found');
+          setLoading(false);
+          return;
+        }
+
+        // First, check if user exists in users collection
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        console.log('User document exists:', userDoc.exists()); // Debug log
+
+        // Then check if user exists in runners collection
+        const runnerDoc = await getDoc(doc(db, 'runners', userId));
+        console.log('Runner document exists:', runnerDoc.exists()); // Debug log
+
+        if (userDoc.exists()) {
+          console.log('Setting user type to client'); // Debug log
+          setUserType('client');
+          setLoading(false);
+          return;
+        }
+
+        if (runnerDoc.exists()) {
+          console.log('Setting user type to runner'); // Debug log
+          setUserType('runner');
+          setLoading(false);
+          return;
+        }
+
+        console.log('User not found in any collection'); // Debug log
+        setError('User not found in any collection');
+        setLoading(false);
+      } catch (error) {
+        console.error('Error checking user type:', error);
+        setError('Failed to determine user type');
+        setLoading(false);
+      }
+    };
+
+    // Add listener for auth state changes
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      console.log('Auth state changed, user:', user?.uid); // Debug log
+      if (user) {
+        checkUserType();
+      } else {
+        setError('No authenticated user');
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Add debug display
+  if (loading) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.title}>Select Interface</Text>
-        <TouchableOpacity
-          style={[styles.interfaceButton, { backgroundColor: '#2196F3' }]}
-          onPress={() => setSelectedInterface('client')}
-        >
-          <Text style={styles.buttonText}>Client Interface</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.interfaceButton, { backgroundColor: '#4CAF50' }]}
-          onPress={() => setSelectedInterface('runner')}
-        >
-          <Text style={styles.buttonText}>Runner Interface</Text>
-        </TouchableOpacity>
+        <ActivityIndicator size="large" color="#0000ff" />
+        <Text style={styles.loadingText}>Loading your interface...</Text>
+        <Text style={styles.debugText}>Checking user type...</Text>
       </View>
     );
   }
 
-  return selectedInterface === 'client' ? <ClientInterface /> : <RunnerInterface />;
+  if (error) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>{error}</Text>
+        <Text style={styles.debugText}>User ID: {auth.currentUser?.uid || 'None'}</Text>
+      </View>
+    );
+  }
+
+  if (!userType) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>Unable to determine user type</Text>
+        <Text style={styles.debugText}>
+          User ID: {auth.currentUser?.uid || 'None'}
+          {'\n'}Type: {userType || 'None'}
+        </Text>
+      </View>
+    );
+  }
+
+  console.log('Rendering interface for user type:', userType); // Debug log
+  return userType === 'client' ? <ClientInterface /> : <RunnerInterface />;
 };
 
 const getStatusColor = (status) => {
