@@ -15,6 +15,7 @@ import RunnerPage from "./screens/RunnerPage";
 import Profiles from "./screens/Errandproviderlogin";
 import Profiles1 from "./screens/Clientlogin";
 import Adminlogin from "./screens/Adminlogin";
+import Clientrequest from "./components/Clientrequest";
 
 // New Drawer Screens
 import Settings from "./components/Settings";
@@ -118,6 +119,11 @@ const AppNavigator = () => {
       <Stack.Screen
         name="Adminlogin"
         component={Adminlogin}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="Clientrequest"
+        component={Clientrequest}
         options={{ headerShown: false }}
       />
     </Stack.Navigator>

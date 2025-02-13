@@ -1,50 +1,47 @@
 import * as React from 'react';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  Pressable,
   ScrollView,
   Modal,
   SafeAreaView,
   TouchableOpacity,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { collection, getDoc,getDocs, doc, setDoc, query, where } from 'firebase/firestore';
+import { db, auth } from '../utils/firebaseConfig';
+import * as Location from 'expo-location';
 
 const ErrandDashboard = () => {
   const navigation = useNavigation();
   const [showEndTaskModal, setShowEndTaskModal] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
+  const [availableTasks, setAvailableTasks] = useState([]);
+  const [ongoingTasks, setOngoingTasks] = useState([]);
+  const [completedTasks, setCompletedTasks] = useState([]);
+  const [location, setLocation] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  const availableTasks = [
-    { id: 1, title: "Grocery Shopping", status: "pending", location: "Downtown Market" },
-    { id: 2, title: "Package Pickup", status: "pending", location: "Post Office" },
-  ];
-
-  const ongoingTasks = [
-    { id: 3, title: "Document Delivery", status: "in-progress", location: "Business District" },
-  ];
-
-  const completedTasks = [
-    { id: 4, title: "Pet Walking", status: "completed", earnings: "$25" },
-    { id: 5, title: "Pharmacy Pickup", status: "completed", earnings: "$15" },
-  ];
-
-  const TaskCard = ({ title, status, location, earnings }) => (
-    <View style={styles.taskCard}>
+  const TaskCard = ({ id, serviceName, status, location, price }) => (
+    <TouchableOpacity 
+      style={styles.taskCard}
+      onPress={() => navigation.navigate('LocateClientAndRunner', { taskId: id })}
+    >
       <View style={styles.taskHeader}>
-        <Text style={styles.taskTitle}>{title}</Text>
+        <Text style={styles.taskTitle}>{serviceName}</Text>
         <View style={[styles.badge, styles[`${status}Badge`]]}>
           <Text style={styles.badgeText}>{status}</Text>
         </View>
       </View>
       <Text style={styles.taskDetails}>
-        {location ? `📍 ${location}` : `💰 ${earnings}`}
+        {location?.address ? `📍 ${location.address}` : `💰 KSH ${price}`}
       </Text>
-    </View>
+    </TouchableOpacity>
   );
 
   const CustomModal = ({ visible, onClose, title, description, onConfirm, confirmText, confirmStyle }) => (
@@ -77,6 +74,147 @@ const ErrandDashboard = () => {
     </Modal>
   );
 
+  const fetchTasks = useCallback(async () => {
+    try {
+      setLoading(true);
+      const tasksCollection = collection(db, 'tasks');
+      
+      // Fetch available tasks
+      const availableQuery = query(tasksCollection, where('status', '==', 'pending'));
+      const availableSnapshot = await getDocs(availableQuery);
+      console.log('Available Tasks Raw Data:', availableSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })));
+      const availableData = availableSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setAvailableTasks(availableData);
+
+      // Fetch ongoing tasks
+      const ongoingQuery = query(
+        tasksCollection, 
+        where('status', '==', 'in-progress'),
+        where('runnerId', '==', auth.currentUser?.uid)
+      );
+      const ongoingSnapshot = await getDocs(ongoingQuery);
+      const ongoingData = ongoingSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setOngoingTasks(ongoingData);
+
+      // Fetch completed tasks
+      const completedQuery = query(
+        tasksCollection, 
+        where('status', '==', 'completed'),
+        where('runnerId', '==', auth.currentUser?.uid)
+      );
+      const completedSnapshot = await getDocs(completedQuery);
+      const completedData = completedSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCompletedTasks(completedData);
+
+    } catch (error) {
+      console.error('Error fetching tasks:', error);
+      alert('Failed to load tasks. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const shareLocation = async () => {
+    try {
+      const runnerId = auth.currentUser?.uid;
+      if (!runnerId) {
+        alert('Please log in to share your location');
+        return;
+      }
+  
+      // First check if runner profile exists
+      const runnerRef = doc(db, 'runners', runnerId);
+      const runnerDoc = await getDoc(runnerRef);
+      console.log('Checking runner profile:', runnerDoc.exists());
+  
+      // Request location permissions
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        alert('Permission to access location was denied');
+        return;
+      }
+  
+      // Get current location
+      let currentLocation = await Location.getCurrentPositionAsync({});
+      setLocation(currentLocation);
+      console.log('Current location obtained:', currentLocation);
+  
+      // Prepare location update data
+      const locationUpdate = {
+        latitude: currentLocation.coords.latitude,
+        longitude: currentLocation.coords.longitude,
+        timestamp: new Date(),
+        isAvailable: true,
+        lastUpdated: new Date()
+      };
+  
+      // If runner profile exists, merge new data with existing data
+      if (runnerDoc.exists()) {
+        console.log('Merging with existing runner profile');
+        await setDoc(runnerRef, locationUpdate, { merge: true });
+      } else {
+        // If runner profile doesn't exist, create new profile with default fields
+        console.log('Creating new runner profile');
+        const initialRunnerData = {
+          ...locationUpdate,
+          role: 'runner',
+          status: 'active',
+          runnerId: runnerId,
+          createdAt: new Date()
+        };
+        await setDoc(runnerRef, initialRunnerData);
+      }
+  
+      console.log('Location shared successfully');
+      navigation.navigate('LocateClientAndRunner');
+  
+    } catch (error) {
+      console.error('Error sharing location:', error);
+      alert('Failed to share location. Please try again.');
+    }
+  };
+  
+
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks]);
+
+  const renderTaskList = (tasks, title) => (
+    <View style={styles.taskSection}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <ScrollView style={styles.taskList}>
+        {loading ? (
+          <ActivityIndicator size="large" color="#3B82F6" />
+        ) : tasks.length > 0 ? (
+          tasks.map(task => (
+            <TaskCard 
+              key={task.id}
+              id={task.id}
+              serviceName={task.serviceName}
+              status={task.status}
+              location={task.location}
+              price={task.price}
+            />
+          ))
+        ) : (
+          <Text style={styles.emptyText}>No {title.toLowerCase()}</Text>
+        )}
+      </ScrollView>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
@@ -97,40 +235,16 @@ const ErrandDashboard = () => {
 
         {/* Task Sections */}
         <View style={styles.taskSections}>
-          <View style={styles.taskSection}>
-            <Text style={styles.sectionTitle}>Available Tasks</Text>
-            <ScrollView style={styles.taskList}>
-              {availableTasks.map(task => (
-                <TaskCard key={task.id} {...task} />
-              ))}
-            </ScrollView>
-          </View>
-
-          <View style={styles.taskSection}>
-            <Text style={styles.sectionTitle}>Ongoing Tasks</Text>
-            <ScrollView style={styles.taskList}>
-              {ongoingTasks.map(task => (
-                <TaskCard key={task.id} {...task} />
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-
-        {/* Completed Tasks */}
-        <View style={styles.completedSection}>
-          <Text style={styles.sectionTitle}>Completed Tasks</Text>
-          <ScrollView style={styles.taskList}>
-            {completedTasks.map(task => (
-              <TaskCard key={task.id} {...task} />
-            ))}
-          </ScrollView>
+          {renderTaskList(availableTasks, "Available Tasks")}
+          {renderTaskList(ongoingTasks, "Ongoing Tasks")}
+          {renderTaskList(completedTasks, "Completed Tasks")}
         </View>
 
         {/* Stats Cards */}
         <View style={styles.statsContainer}>
           <View style={[styles.statsCard, styles.earningsCard]}>
             <Text style={styles.statsTitle}>Earnings</Text>
-            <Text style={styles.statsValue}>$245.00</Text>
+            <Text style={styles.statsValue}>Ksh 24500.00</Text>
           </View>
           <View style={[styles.statsCard, styles.paymentCard]}>
             <Text style={styles.statsTitle}>Payment Status</Text>
@@ -156,18 +270,17 @@ const ErrandDashboard = () => {
           </TouchableOpacity>
         </View>
 
-        
         {/* Navigation */}
         <View style={styles.navigation}>
-
-          <MaterialCommunityIcons name="home" size={26} color="#6b7280"
-            onPress={() => navigation.navigate('HomePage')} />
-          <MaterialCommunityIcons name="account-group" size={26} color="#6b7280" 
+          <MaterialCommunityIcons 
+            name="home" 
+            size={26} 
+            color="#6b7280"
+            onPress={() => navigation.navigate('HomePage')} 
           />
-          <MaterialCommunityIcons name="wallet" size={26} color="#6b7280" 
-          />
-          <MaterialCommunityIcons name="cog" size={26} color="#6b7280" 
-          />
+          <MaterialCommunityIcons name="account-group" size={26} color="#6b7280" />
+          <MaterialCommunityIcons name="wallet" size={26} color="#6b7280" />
+          <MaterialCommunityIcons name="cog" size={26} color="#6b7280" />
         </View>
 
         {/* Modals */}
@@ -186,18 +299,7 @@ const ErrandDashboard = () => {
           onClose={() => setShowLocationModal(false)}
           title="Share Location"
           description="Share your real-time location with the client? This helps them track their errand progress."
-          onConfirm={() => {
-            navigator.geolocation.getCurrentPosition(
-              (position) => {
-                const { latitude, longitude } = position.coords;
-                // TODO: Send location to your backend/client
-                console.log(`Location: ${latitude}, ${longitude}`);
-              },
-              (error) => {
-                console.error('Error getting location:', error);
-              }
-            );
-          }}
+          onConfirm={shareLocation}
           confirmText="Share Location"
           confirmStyle={styles.locationModalButton}
         />

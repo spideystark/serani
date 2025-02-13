@@ -55,7 +55,6 @@ const Products = () => {
 
     const pickImage = async () => {
         try {
-            // Check permissions first
             const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (status !== 'granted') {
                 alert('Sorry, we need camera roll permissions to upload images.');
@@ -67,19 +66,12 @@ const Products = () => {
                 allowsEditing: true,
                 aspect: [4, 3],
                 quality: 0.5,
-                maxWidth: 1000,
-                maxHeight: 1000
+                base64: true, // Add this to get base64 data
             });
     
-            if (!result.canceled) {
+            if (!result.canceled && result.assets[0]) {
                 const selectedAsset = result.assets[0];
-                // Validate file size (2MB limit)
-                const response = await fetch(selectedAsset.uri);
-                const blob = await response.blob();
-                if (blob.size > 2 * 1024 * 1024) {
-                    alert('Please select an image smaller than 2MB');
-                    return;
-                }
+                console.log('Selected image URI:', selectedAsset.uri); // Log the URI
                 setImageUri(selectedAsset.uri);
             }
         } catch (error) {
@@ -90,50 +82,54 @@ const Products = () => {
     
     const uploadImage = async (uri) => {
         try {
-            const response = await fetch(uri);
-            const blob = await response.blob();
+            console.log('Starting image upload...');
     
-            // Generate unique filename with timestamp and random string
-            const ext = uri.substring(uri.lastIndexOf('.') + 1);
-            const filename = `tasks/${Date.now()}-${Math.random().toString(36).substr(2, 9)}.${ext}`;
+            // Convert URI to Blob
+            let blob;
+            if (uri.startsWith('file://')) {
+                // Handle file:// URIs on Android
+                const response = await fetch(uri);
+                blob = await response.blob();
+            } else {
+                // Handle other URIs (e.g., http://, https://)
+                const response = await fetch(uri);
+                blob = await response.blob();
+            }
+    
+            if (!blob) {
+                throw new Error('Failed to convert image to Blob');
+            }
+    
+            // Generate a unique filename
+            const filename = `tasks/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.jpg`;
+    
+            // Create a reference to the storage location
             const storageRef = ref(storage, filename);
     
-            // Set metadata
+            // Set metadata for the file
             const metadata = {
-                contentType: `image/${ext}`,
-                cacheControl: 'public,max-age=300',
+                contentType: 'image/jpeg', // Ensure this matches the image type
             };
     
-            // Upload with retry logic
-            const maxRetries = 3;
-            let lastError = null;
+            // Upload the Blob to Firebase Storage
+            const snapshot = await uploadBytes(storageRef, blob, metadata);
+            console.log('Upload successful:', snapshot);
     
-            for (let attempt = 0; attempt < maxRetries; attempt++) {
-                try {
-                    const snapshot = await uploadBytes(storageRef, blob, metadata);
-                    console.log(`Upload successful on attempt ${attempt + 1}`);
-                    return await getDownloadURL(snapshot.ref);
-                } catch (error) {
-                    lastError = error;
-                    console.error(`Upload attempt ${attempt + 1} failed:`, error);
-                    if (attempt < maxRetries - 1) {
-                        await new Promise(resolve => 
-                            setTimeout(resolve, Math.pow(2, attempt) * 1000)
-                        );
-                    }
-                }
-            }
-            throw new Error(`Upload failed after ${maxRetries} attempts: ${lastError.message}`);
+            // Get the download URL for the uploaded file
+            const downloadURL = await getDownloadURL(snapshot.ref);
+            console.log('Download URL:', downloadURL);
+    
+            return downloadURL;
         } catch (error) {
             console.error('Upload error:', error);
             throw new Error(
-                error.code === 'storage/unauthorized' 
-                    ? 'Not authorized to upload images' 
+                error.code === 'storage/unauthorized'
+                    ? 'Not authorized to upload images'
                     : 'Failed to upload image. Please try again.'
             );
         }
     };
-    
+
     const handleSubmit = async () => {
         if (isLoading) return;
     
@@ -148,8 +144,11 @@ const Products = () => {
             let imageUrl = '';
             if (imageUri) {
                 try {
+                    console.log('Starting image upload...');
                     imageUrl = await uploadImage(imageUri);
+                    console.log('Image uploaded successfully:', imageUrl);
                 } catch (error) {
+                    console.error('Image upload failed:', error);
                     setIsLoading(false);
                     alert(error.message);
                     return;
@@ -162,12 +161,13 @@ const Products = () => {
                 description: serviceDescription.trim(),
                 price: Number(price),
                 imageUrl,
+                status: 'pending',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
     
             await addDoc(collection(db, 'tasks'), taskData);
-            await fetchTasks(); // Refresh list
+            await fetchTasks();
             
             // Reset form
             setSelectedCategory('');

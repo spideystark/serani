@@ -27,6 +27,10 @@ try {
     auth = initializeAuth(app, {
         persistence: getReactNativePersistence(AsyncStorage)
     });
+
+    //Pass LocationTracker 
+
+    
     
     // Initialize Firestore
     db = getFirestore(app);

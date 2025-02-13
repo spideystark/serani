@@ -19,20 +19,41 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "foregroundImage": "./assets/seranlogo.png"
+      "foregroundImage": "./assets/seranlogo.png",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app needs access to location services to show your current location.",
+        "NSLocationAlwaysUsageDescription": "This app needs access to location services to show your current location."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/seranlogo.png",
         "backgroundColor": "#FFFFFF"
-      }
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
+      "package": "com.anonymous.serani_app"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/seranlogo.png"
     },
-    "newArchEnabled": true,
     "plugins": [
-      "expo-font"
-    ]
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Serani App to use your location."
+        }
+      ]
+    ],
+    "newArchEnabled": true
   }
 }
