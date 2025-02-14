@@ -9,6 +9,7 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Image,
+  ImageBackground,
   ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -16,6 +17,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { collection, getDoc,getDocs, doc, setDoc, query, where } from 'firebase/firestore';
 import { db, auth } from '../utils/firebaseConfig';
 import * as Location from 'expo-location';
+import { Border, Color, FontFamily, FontSize } from "../GlobalStyles";
 
 const ErrandDashboard = () => {
   const navigation = useNavigation();
@@ -243,18 +245,25 @@ const ErrandDashboard = () => {
         {/* Stats Cards */}
         <View style={styles.statsContainer}>
           <View style={[styles.statsCard, styles.earningsCard]}>
-            <Text style={styles.statsTitle}>Earnings</Text>
-            <Text style={styles.statsValue}>Ksh 24500.00</Text>
+            <Text style={styles.statsTitleEarnings}>Earnings</Text>
+            <Text style={styles.statsValue}>Ksh 24,500.00</Text>
           </View>
+          
           <View style={[styles.statsCard, styles.paymentCard]}>
-            <Text style={styles.statsTitle}>Payment Status</Text>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>Up to date</Text>
-            </View>
+            <ImageBackground 
+              source={require('../assets/mpesa.png')} 
+              style={styles.imageBackgroundStyle}
+              imageStyle={styles.imageBackgroundImageStyle}
+            >
+              <Text style={styles.statsTitle}>Payment Status</Text>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>Up to date</Text>
+              </View>
+            </ImageBackground>
           </View>
         </View>
 
-        {/* Action Buttons */}
+          {/* Action Buttons */}
         <View style={styles.buttonContainer}>
           <TouchableOpacity 
             style={[styles.button, styles.endTaskButton]}
@@ -266,7 +275,7 @@ const ErrandDashboard = () => {
             style={[styles.button, styles.locationButton]}
             onPress={() => setShowLocationModal(true)}
           >
-            <Text style={styles.buttonText}>Location Sharing</Text>
+            <Text style={styles.buttonTextLocation}>Location Sharing</Text>
           </TouchableOpacity>
         </View>
 
@@ -413,13 +422,15 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 12,
     padding: 16,
+    height: 100, // Add a fixed height
+    justifyContent: 'center',
     alignItems: 'center',
   },
   earningsCard: {
-    backgroundColor: '#3B82F6', // blue-500
+    backgroundColor: Color.colorPaleturquoise, // blue-500
   },
   paymentCard: {
-    backgroundColor: '#8B5CF6', // purple-500
+    backgroundColor: 'white', // purple-500
   },
   statsTitle: {
     color: '#FFFFFF',
@@ -427,8 +438,14 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginBottom: 8,
   },
+  statsTitleEarnings: {
+    color: 'black',
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 8,
+  },
   statsValue: {
-    color: '#FFFFFF',
+    color: 'black',
     fontSize: 24,
     fontWeight: '700',
   },
@@ -441,14 +458,20 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: 'center',
   },
+
   endTaskButton: {
     backgroundColor: '#EF4444', // red-500
   },
   locationButton: {
-    backgroundColor: '#3B82F6', // blue-500
+    backgroundColor: Color.colorPaleturquoise, // blue-500
   },
   buttonText: {
     color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  buttonTextLocation: {
+    color: 'black',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -522,6 +545,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     padding: 16,
     backgroundColor: '#FFFFFF',
+  },
+  imageBackgroundStyle: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageBackgroundImageStyle: {
+    borderRadius: 12,
   },
 });
 

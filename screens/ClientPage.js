@@ -19,20 +19,90 @@ const Clientpage = () => {
     {
       id: "0",
       image: "https://cdn-icons-png.flaticon.com/128/4643/4643574.png",
-      name: "shirt",
+      name: "House Cleaning",
       quantity: 0,
-      price: 50,
+      price: 1500,
     },
-    // ... rest of the services array
+    {
+      id: "1",
+      image: "https://cdn-icons-png.flaticon.com/128/995/995016.png",
+      name: "Plumbing",
+      quantity: 0,
+      price: 800,
+    },
+    {
+      id: "2",
+      image: "https://cdn-icons-png.flaticon.com/128/2271/2271062.png",
+      name: "Electrician",
+      quantity: 0,
+      price: 1000,
+    },
+    {
+      id: "3",
+      image: "https://cdn-icons-png.flaticon.com/128/3079/3079165.png",
+      name: "Painting",
+      quantity: 0,
+      price: 2000,
+    },
+    {
+      id: "4",
+      image: "https://cdn-icons-png.flaticon.com/128/1785/1785210.png",
+      name: "Gardening",
+      quantity: 0,
+      price: 500,
+    }
   ];
 
   // Location functions remain the same
   const checkIfLocationEnabled = useCallback(async () => {
     // ... same implementation
+    let enabled = await Location.hasServicesEnabledAsync();
+    if (!enabled) {
+      Alert.alert(
+        'Location services are not enabled',
+        'Please enable location services',
+        [{ text: 'OK' }],
+        { cancelable: false }
+      );
+    } else {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission denied',
+          'Allow the app to use location services.',
+          [{ text: 'OK' }],
+          { cancelable: false }
+        );
+      }
+    }
+
+    let { coords } = await Location.getCurrentPositionAsync();
+    if (coords) {
+      const { latitude, longitude } = coords;
+      let response = await Location.reverseGeocodeAsync({
+        latitude,
+        longitude
+      });
+      for (let item of response) {
+        let address = `${item.name}, ${item.street}, ${item.postalCode}`;
+        setDisplayCurrentAddress(address);
+      }
+    }
   }, []);
 
   const getCurrentLocation = useCallback(async () => {
     // ... same implementation
+    let { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Permission denied',
+        'Allow the app to use location services.',
+        [{ text: 'OK' }],
+        { cancelable: false }
+      );
+    }
+    
+
   }, []);
 
   useEffect(() => {

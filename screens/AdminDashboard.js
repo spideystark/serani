@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { useNavigation } from '@react-navigation/native';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../utils/firebaseConfig';
 
 const windowWidth = Dimensions.get('window').width;
 
@@ -47,6 +49,11 @@ const StatCard = ({ title, value, iconName, color }) => (
 const AdminDashboard = () => {
   const navigation = useNavigation();
   const [selectedService, setSelectedService] = useState(null);
+  const [taskStats, setTaskStats] = useState([
+    { name: 'Completed', value: 'KSH 0', color: '#0088FE', icon: 'check-circle' },
+    { name: 'Ongoing', value: 'KSH 0', color: '#00C49F', icon: 'trending-up' },
+    { name: 'Available', value: 'KSH 0', color: '#FFBB28', icon: 'alert-circle' }
+  ]);
   
   const services = [
     { id: 1, name: 'Washing', count: 45, icon: '🧺' },
@@ -55,17 +62,76 @@ const AdminDashboard = () => {
     { id: 4, name: 'Room Service', count: 35, icon: '🏠' },
   ];
 
-  const recentTasks = [
-    { id: 1, task: 'Floor Cleaning', time: 'Just now', status: 'completed', customer: 'John Doe' },
-    { id: 2, task: 'Car Washing', time: '5 mins ago', status: 'ongoing', customer: 'Jane Smith' },
-    { id: 3, task: 'Room Cleaning', time: '10 mins ago', status: 'pending', customer: 'Mike Johnson' },
-  ];
+  const [recentTasks, setRecentTasks] = useState([]);
 
-  const taskStats = [
-    { name: 'Completed', value: 30, color: '#0088FE', icon: 'check-circle' },
-    { name: 'Ongoing', value: 15, color: '#00C49F', icon: 'trending-up' },
-    { name: 'Available', value: 10, color: '#FFBB28', icon: 'alert-circle' },
-  ];
+  const fetchRecentTasks = async () => {
+    try {
+      const tasksRef = collection(db, 'tasks');
+      const q = query(tasksRef, where('status', 'in', ['completed', 'in-progress', 'pending']));
+      const querySnapshot = await getDocs(q);
+      
+      const tasks = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          task: data.serviceName || 'Unknown Task',
+          time: data.createdAt || 'Unknown time',
+          status: data.status === 'in-progress' ? 'ongoing' : data.status,
+          // Handle location object properly
+          location: data.location?.address || 'Unknown location',
+        };
+      });
+  
+      // Sort by timestamp and take latest 3
+      const sortedTasks = tasks.sort((a, b) => b.time - a.time).slice(0, 3);
+      setRecentTasks(sortedTasks);
+    } catch (error) {
+      console.error('Error fetching recent tasks:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecentTasks();
+  }, []);
+
+  // Add function to fetch and calculate task statistics
+  const fetchTaskStats = async () => {
+    try {
+      const tasksRef = collection(db, 'tasks');
+      
+      // Get completed tasks
+      const completedQuery = query(tasksRef, where('status', '==', 'completed'));
+      const completedSnapshot = await getDocs(completedQuery);
+      const completedTotal = completedSnapshot.docs.reduce((sum, doc) => 
+        sum + (doc.data().price || 0), 0);
+
+      // Get ongoing tasks
+      const ongoingQuery = query(tasksRef, where('status', '==', 'in-progress'));
+      const ongoingSnapshot = await getDocs(ongoingQuery);
+      const ongoingTotal = ongoingSnapshot.docs.reduce((sum, doc) => 
+        sum + (doc.data().price || 0), 0);
+
+      // Get available tasks
+      const availableQuery = query(tasksRef, where('status', '==', 'pending'));
+      const availableSnapshot = await getDocs(availableQuery);
+      const availableTotal = availableSnapshot.docs.reduce((sum, doc) => 
+        sum + (doc.data().price || 0), 0);
+
+      // Update taskStats with fetched data
+      setTaskStats([
+        { name: 'Completed', value: `KSH ${completedTotal.toLocaleString()}`, color: '#0088FE', icon: 'check-circle' },
+        { name: 'Ongoing', value: `KSH ${ongoingTotal.toLocaleString()}`, color: '#00C49F', icon: 'trending-up' },
+        { name: 'Available', value: `KSH ${availableTotal.toLocaleString()}`, color: '#FFBB28', icon: 'alert-circle' }
+      ]);
+    } catch (error) {
+      console.error('Error fetching task statistics:', error);
+    }
+  };
+
+  // Add useEffect to fetch data when component mounts
+  useEffect(() => {
+    fetchTaskStats();
+  }, []);
 
   const barData = [
     { name: 'Mon', tasks: 20 },
@@ -153,19 +219,33 @@ const AdminDashboard = () => {
           <Text style={styles.cardTitle}>Recent Tasks</Text>
           {recentTasks.map((task) => (
             <View key={task.id} style={styles.taskItem}>
-              <View>
-                <Text style={styles.taskName}>{task.task}</Text>
-                <Text style={styles.taskCustomer}>{task.customer}</Text>
-              </View>
-              <View style={styles.taskStatus}>
-                <Text style={[styles.statusText, { color: getStatusColor(task.status) }]}>
-                  {task.status}
-                </Text>
-                <Text style={styles.taskTime}>{task.time}</Text>
+              <View style={styles.taskDetails}>
+                <View style={styles.taskMainInfo}>
+                  <MaterialCommunityIcons 
+                    name={task.status === 'completed' ? 'check-circle' : 
+                         task.status === 'ongoing' ? 'progress-clock' : 'clock-outline'} 
+                    size={20} 
+                    color={getStatusColor(task.status)}
+                    style={styles.taskIcon}
+                  />
+                  <View>
+                    <Text style={styles.taskName}>{task.task}</Text>
+                    <Text style={styles.taskLocation}>{task.location}</Text>
+                  </View>
+                </View>
+                <View style={styles.taskStatus}>
+                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(task.status) + '20' }]}>
+                    <Text style={[styles.statusText, { color: getStatusColor(task.status) }]}>
+                      {task.status}
+                    </Text>
+                  </View>
+                  <Text style={styles.taskTime}>{task.time}</Text>
+                </View>
               </View>
             </View>
           ))}
         </View>
+          
       </ScrollView>
 
       {/* Navigation */}
@@ -342,6 +422,31 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
+  },
+  taskDetails: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  taskMainInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  taskIcon: {
+    marginRight: 12,
+  },
+  taskLocation: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 4,
   },
 });
 

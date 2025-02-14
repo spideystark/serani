@@ -4,6 +4,8 @@ import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { collection, doc, setDoc, onSnapshot, query, where, getDoc } from 'firebase/firestore';
 import { db, auth } from '../utils/firebaseConfig';
+import { useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 
 // Base location tracking component that handles common functionality
 const BaseLocationTracker = ({ children, onLocationUpdate }) => {
@@ -80,6 +82,7 @@ const BaseLocationTracker = ({ children, onLocationUpdate }) => {
 
 // Client interface showing available runners and their tasks
 const ClientInterface = () => {
+  const navigation = useNavigation();
   const [availableRunners, setAvailableRunners] = useState([]);
   const [userTasks, setUserTasks] = useState([]);
 
@@ -174,6 +177,19 @@ const ClientInterface = () => {
             ))}
           </MapView>
 
+          {/* Back Button */}
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons 
+              name="arrow-undo-outline" 
+              size={24} 
+              color="#000"
+            />
+            <Text style={styles.backButtonText}>Back</Text>
+          </TouchableOpacity>
+
           <View style={styles.overlay}>
             <Text style={styles.overlayText}>
               Available Runners: {availableRunners.length}
@@ -190,6 +206,7 @@ const ClientInterface = () => {
 
 // Runner interface showing available tasks
 const RunnerInterface = () => {
+  const navigation = useNavigation();
   const [availableTasks, setAvailableTasks] = useState([]);
   const [isAvailable, setIsAvailable] = useState(true);
 
@@ -273,6 +290,19 @@ const RunnerInterface = () => {
               </Marker>
             ))}
           </MapView>
+
+          {/* Back Button */}
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons 
+              name="arrow-undo-outline" 
+              size={24} 
+              color="#000"
+            />
+            <Text style={styles.backButtonText}>Back</Text>
+          </TouchableOpacity>
 
           <View style={styles.overlay}>
             <TouchableOpacity
@@ -554,6 +584,30 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  backButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 20,
+    left: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: 8,
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  backButtonText: {
+    marginLeft: 4,
+    fontSize: 16,
+    color: '#000',
+    fontWeight: '500',
   },
 
 });

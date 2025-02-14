@@ -6,12 +6,13 @@ import {
     TouchableOpacity, 
     Image, 
     ScrollView, 
-    StyleSheet 
+    StyleSheet,
+    Alert
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
 import { db, storage } from '../utils/firebaseConfig';
-import { collection, addDoc, getDocs } from 'firebase/firestore';
+import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const Products = () => {
@@ -22,6 +23,7 @@ const Products = () => {
     const [imageUri, setImageUri] = useState(null);
     const [tasks, setTasks] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [editingTask, setEditingTask] = useState(null);
 
     const categories = [
         { id: "grocery_shopping", name: "Grocery & Shopping" },
@@ -49,7 +51,7 @@ const Products = () => {
             setTasks(tasksList);
         } catch (error) {
             console.error('Error fetching tasks:', error);
-            alert('Failed to load tasks. Please try again.');
+            Alert.alert('Error', 'Failed to load tasks. Please try again.');
         }
     };
 
@@ -57,7 +59,7 @@ const Products = () => {
         try {
             const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (status !== 'granted') {
-                alert('Sorry, we need camera roll permissions to upload images.');
+                Alert.alert('Permission Required', 'Sorry, we need camera roll permissions to upload images.');
                 return;
             }
     
@@ -66,60 +68,42 @@ const Products = () => {
                 allowsEditing: true,
                 aspect: [4, 3],
                 quality: 0.5,
-                base64: true, // Add this to get base64 data
+                base64: true,
             });
     
             if (!result.canceled && result.assets[0]) {
                 const selectedAsset = result.assets[0];
-                console.log('Selected image URI:', selectedAsset.uri); // Log the URI
                 setImageUri(selectedAsset.uri);
             }
         } catch (error) {
             console.error('Image pick error:', error);
-            alert('Failed to select image. Please try again.');
+            Alert.alert('Error', 'Failed to select image. Please try again.');
         }
     };
-    
+
     const uploadImage = async (uri) => {
         try {
-            console.log('Starting image upload...');
-    
-            // Convert URI to Blob
             let blob;
             if (uri.startsWith('file://')) {
-                // Handle file:// URIs on Android
                 const response = await fetch(uri);
                 blob = await response.blob();
             } else {
-                // Handle other URIs (e.g., http://, https://)
                 const response = await fetch(uri);
                 blob = await response.blob();
             }
-    
+
             if (!blob) {
                 throw new Error('Failed to convert image to Blob');
             }
-    
-            // Generate a unique filename
+
             const filename = `tasks/${Date.now()}-${Math.random().toString(36).substring(2, 9)}.jpg`;
-    
-            // Create a reference to the storage location
             const storageRef = ref(storage, filename);
-    
-            // Set metadata for the file
             const metadata = {
-                contentType: 'image/jpeg', // Ensure this matches the image type
+                contentType: 'image/jpeg',
             };
-    
-            // Upload the Blob to Firebase Storage
+
             const snapshot = await uploadBytes(storageRef, blob, metadata);
-            console.log('Upload successful:', snapshot);
-    
-            // Get the download URL for the uploaded file
-            const downloadURL = await getDownloadURL(snapshot.ref);
-            console.log('Download URL:', downloadURL);
-    
-            return downloadURL;
+            return await getDownloadURL(snapshot.ref);
         } catch (error) {
             console.error('Upload error:', error);
             throw new Error(
@@ -130,31 +114,65 @@ const Products = () => {
         }
     };
 
+    const handleEdit = (task) => {
+        setEditingTask(task);
+        setSelectedCategory(task.category);
+        setServiceName(task.serviceName);
+        setServiceDescription(task.description);
+        setPrice(task.price.toString());
+        setImageUri(task.imageUrl);
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    };
+
+    const handleDelete = async (taskId) => {
+        Alert.alert(
+            "Delete Service",
+            "Are you sure you want to delete this service?",
+            [
+                {
+                    text: "Cancel",
+                    style: "cancel"
+                },
+                {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            await deleteDoc(doc(db, 'tasks', taskId));
+                            setTasks(tasks.filter(task => task.id !== taskId));
+                            Alert.alert("Success", "Service deleted successfully!");
+                        } catch (error) {
+                            console.error('Delete error:', error);
+                            Alert.alert("Error", "Failed to delete service. Please try again.");
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     const handleSubmit = async () => {
         if (isLoading) return;
-    
-        // Validate required fields
+
         if (!selectedCategory || !serviceName || !price) {
-            alert('Please fill in all required fields');
+            Alert.alert('Error', 'Please fill in all required fields');
             return;
         }
-    
+
         setIsLoading(true);
         try {
-            let imageUrl = '';
-            if (imageUri) {
+            let imageUrl = imageUri;
+            if (imageUri && !imageUri.startsWith('http')) {
                 try {
-                    console.log('Starting image upload...');
                     imageUrl = await uploadImage(imageUri);
-                    console.log('Image uploaded successfully:', imageUrl);
                 } catch (error) {
                     console.error('Image upload failed:', error);
                     setIsLoading(false);
-                    alert(error.message);
+                    Alert.alert('Error', error.message);
                     return;
                 }
             }
-    
+
             const taskData = {
                 category: selectedCategory,
                 serviceName: serviceName.trim(),
@@ -162,39 +180,50 @@ const Products = () => {
                 price: Number(price),
                 imageUrl,
                 status: 'pending',
-                createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
-    
-            await addDoc(collection(db, 'tasks'), taskData);
-            await fetchTasks();
-            
-            // Reset form
+
+            if (editingTask) {
+                await updateDoc(doc(db, 'tasks', editingTask.id), taskData);
+                setTasks(tasks.map(task => 
+                    task.id === editingTask.id ? { ...task, ...taskData } : task
+                ));
+                setEditingTask(null);
+            } else {
+                taskData.createdAt = new Date().toISOString();
+                await addDoc(collection(db, 'tasks'), taskData);
+                await fetchTasks();
+            }
+
             setSelectedCategory('');
             setServiceName('');
             setServiceDescription('');
             setPrice('');
             setImageUri(null);
-    
-            alert('Task added successfully!');
+
+            Alert.alert('Success', `Service ${editingTask ? 'updated' : 'added'} successfully!`);
         } catch (error) {
             console.error('Submit error:', error);
-            alert('Failed to add task. Please try again.');
+            Alert.alert('Error', 'Failed to save service. Please try again.');
         } finally {
             setIsLoading(false);
         }
     };
 
+    const scrollViewRef = React.createRef();
+
     return (
-        <ScrollView style={styles.container}>
-            <Text style={styles.title}>Admin Task Management</Text>
+        <ScrollView ref={scrollViewRef} style={styles.container}>
+            <Text style={styles.title}>
+                {editingTask ? 'Edit Service' : 'Add New Service'}
+            </Text>
             
             <View style={styles.form}>
                 <View style={styles.formGroup}>
                     <Text style={styles.label}>Category:</Text>
                     <Picker
                         selectedValue={selectedCategory}
-                        onValueChange={(itemValue) => setSelectedCategory(itemValue)}
+                        onValueChange={setSelectedCategory}
                         style={styles.picker}
                     >
                         <Picker.Item label="Select a category" value="" />
@@ -261,13 +290,29 @@ const Products = () => {
                     disabled={isLoading}
                 >
                     <Text style={styles.submitButtonText}>
-                        {isLoading ? 'Adding...' : 'Add Task'}
+                        {isLoading ? 'Saving...' : editingTask ? 'Update Service' : 'Add Service'}
                     </Text>
                 </TouchableOpacity>
+
+                {editingTask && (
+                    <TouchableOpacity
+                        style={styles.cancelButton}
+                        onPress={() => {
+                            setEditingTask(null);
+                            setSelectedCategory('');
+                            setServiceName('');
+                            setServiceDescription('');
+                            setPrice('');
+                            setImageUri(null);
+                        }}
+                    >
+                        <Text style={styles.cancelButtonText}>Cancel Edit</Text>
+                    </TouchableOpacity>
+                )}
             </View>
 
             <View style={styles.tasksList}>
-                <Text style={styles.subtitle}>Existing Tasks</Text>
+                <Text style={styles.subtitle}>Existing Services</Text>
                 <View style={styles.tasksGrid}>
                     {tasks.map((task) => (
                         <View key={task.id} style={styles.taskCard}>
@@ -278,9 +323,29 @@ const Products = () => {
                                 />
                             )}
                             <Text style={styles.taskTitle}>{task.serviceName}</Text>
-                            <Text>Category: {task.category}</Text>
-                            <Text>Price: ${task.price}</Text>
-                            <Text>{task.description}</Text>
+                            <Text style={styles.taskCategory}>
+                                {categories.find(c => c.id === task.category)?.name || task.category}
+                            </Text>
+                            <Text style={styles.taskPrice}>Ksh {task.price}</Text>
+                            <Text style={styles.taskDescription} numberOfLines={3}>
+                                {task.description}
+                            </Text>
+                            
+                            <View style={styles.taskActions}>
+                                <TouchableOpacity 
+                                    style={styles.editButton}
+                                    onPress={() => handleEdit(task)}
+                                >
+                                    <Text style={styles.editButtonText}>Edit</Text>
+                                </TouchableOpacity>
+                                
+                                <TouchableOpacity 
+                                    style={styles.deleteButton}
+                                    onPress={() => handleDelete(task.id)}
+                                >
+                                    <Text style={styles.deleteButtonText}>Delete</Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
                     ))}
                 </View>
@@ -296,74 +361,102 @@ const styles = StyleSheet.create({
         backgroundColor: '#f5f5f5',
     },
     title: {
-        fontSize: 24,
+        fontSize: 28,
         fontWeight: 'bold',
-        marginBottom: 20,
+        marginBottom: 24,
+        color: '#1a1a1a',
+        textAlign: 'center',
     },
     form: {
         backgroundColor: '#fff',
-        padding: 16,
-        borderRadius: 8,
-        marginBottom: 20,
+        padding: 20,
+        borderRadius: 12,
+        marginBottom: 24,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
     },
     formGroup: {
-        marginBottom: 16,
+        marginBottom: 20,
     },
     label: {
         marginBottom: 8,
-        fontWeight: '500',
+        fontWeight: '600',
+        color: '#333',
+        fontSize: 16,
     },
     input: {
         borderWidth: 1,
-        borderColor: '#ddd',
-        borderRadius: 4,
-        padding: 8,
+        borderColor: '#e0e0e0',
+        borderRadius: 8,
+        padding: 12,
+        fontSize: 16,
+        backgroundColor: '#f8f8f8',
     },
     textArea: {
-        height: 100,
+        height: 120,
         textAlignVertical: 'top',
     },
     picker: {
         borderWidth: 1,
-        borderColor: '#ddd',
-        borderRadius: 4,
+        borderColor: '#e0e0e0',
+        borderRadius: 8,
+        backgroundColor: '#f8f8f8',
     },
     imagePicker: {
-        backgroundColor: '#e0e0e0',
-        padding: 12,
-        borderRadius: 4,
+        backgroundColor: '#f0f0f0',
+        padding: 16,
+        borderRadius: 8,
         alignItems: 'center',
-        marginBottom: 16,
+        marginBottom: 20,
     },
     imagePickerText: {
-        color: '#333',
+        color: '#444',
+        fontSize: 16,
+        fontWeight: '500',
     },
     previewImage: {
         width: '100%',
         height: 200,
-        borderRadius: 4,
-        marginBottom: 16,
+        borderRadius: 8,
+        marginBottom: 20,
     },
     submitButton: {
         backgroundColor: '#007AFF',
         padding: 16,
-        borderRadius: 4,
+        borderRadius: 8,
         alignItems: 'center',
+        marginBottom: 12,
     },
     submitButtonText: {
         color: '#fff',
         fontWeight: 'bold',
+        fontSize: 16,
     },
-    submitButtonDisabled: {
-        opacity: 0.5,
+    cancelButton: {
+        backgroundColor: '#f8f8f8',
+        padding: 16,
+        borderRadius: 8,
+        alignItems: 'center',
+        marginBottom: 24,
+        borderWidth: 1,
+        borderColor: '#ddd',
+    },
+    cancelButtonText: {
+        color: '#666',
+        fontWeight: '600',
+        fontSize: 16,
     },
     tasksList: {
-        marginTop: 20,
+        marginTop: 24,
     },
     subtitle: {
-        fontSize: 20,
+        fontSize: 24,
         fontWeight: 'bold',
-        marginBottom: 16,
+        marginBottom: 20,
+        color: '#1a1a1a',
     },
     tasksGrid: {
         flexDirection: 'row',
@@ -373,19 +466,70 @@ const styles = StyleSheet.create({
     taskCard: {
         backgroundColor: '#fff',
         padding: 16,
-        borderRadius: 8,
-        width: '48%',
+        borderRadius: 12,
+        width: '46%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
     },
     taskImage: {
         width: '100%',
-        height: 150,
-        borderRadius: 4,
-        marginBottom: 8,
+        height: 160,
+        borderRadius: 8,
+        marginBottom: 12,
     },
     taskTitle: {
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: 'bold',
         marginBottom: 8,
+        color: '#1a1a1a',
+    },
+    taskCategory: {
+        fontSize: 14,
+        color: '#666',
+        marginBottom: 6,
+    },
+    taskPrice: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#007AFF',
+        marginBottom: 8,
+    },
+    taskDescription: {
+        fontSize: 14,
+        color: '#444',
+        marginBottom: 12,
+    },
+    taskActions: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 12,
+    },
+    editButton: {
+        backgroundColor: '#4CAF50',
+        padding: 8,
+        borderRadius: 6,
+        flex: 1,
+        marginRight: 8,
+        alignItems: 'center',
+    },
+    editButtonText: {
+        color: '#fff',
+        fontWeight: '600',
+    },
+    deleteButton: {
+        backgroundColor: '#FF3B30',
+        padding: 8,
+        borderRadius: 6,
+        flex: 1,
+        marginLeft: 8,
+        alignItems: 'center',
+    },
+    deleteButtonText: {
+        color: '#fff',
+        fontWeight: '600',
     },
 });
 
