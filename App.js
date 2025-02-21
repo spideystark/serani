@@ -16,6 +16,8 @@ import Profiles from "./screens/Errandproviderlogin";
 import Profiles1 from "./screens/Clientlogin";
 import Adminlogin from "./screens/Adminlogin";
 import Clientrequest from "./components/Clientrequest";
+import RunnerSignup from "./screens/ErrandProvidersignup";
+import ChatScreen from "./screens/Chat";
 
 // New Drawer Screens
 import Settings from "./components/Settings";
@@ -126,7 +128,18 @@ const AppNavigator = () => {
         component={Clientrequest}
         options={{ headerShown: false }}
       />
+      <Stack.Screen
+        name="RunnerSignup"
+        component={RunnerSignup}
+        options={{ headerShown: false }}
+        />
+      <Stack.Screen
+        name="Chat"
+        component={ChatScreen}
+        options={{ headerShown: false }}
+      />
     </Stack.Navigator>
+    
   );
 };
 

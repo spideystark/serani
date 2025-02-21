@@ -1,11 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, Platform, ActivityIndicator, TouchableOpacity } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
-import { collection, doc, setDoc, onSnapshot, query, where, getDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, onSnapshot, query, where, getDoc, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../utils/firebaseConfig';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { Alert } from 'react-native';
+
+// Utility function to calculate distance between two coordinates in kilometers
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+  
+  const R = 6371; // Radius of the earth in km
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2); 
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+  const distance = R * c; // Distance in km
+  return distance;
+};
+
+const deg2rad = (deg) => {
+  return deg * (Math.PI/180);
+};
 
 // Base location tracking component that handles common functionality
 const BaseLocationTracker = ({ children, onLocationUpdate }) => {
@@ -84,7 +105,31 @@ const BaseLocationTracker = ({ children, onLocationUpdate }) => {
 const ClientInterface = () => {
   const navigation = useNavigation();
   const [availableRunners, setAvailableRunners] = useState([]);
-  const [userTasks, setUserTasks] = useState([]);
+  const [currentUserData, setCurrentUserData] = useState(null);
+  const [filteredRunners, setFilteredRunners] = useState([]);
+  const [userLocation, setUserLocation] = useState(null);
+  const [selectedRunner, setSelectedRunner] = useState(null);
+  const [routeToRunner, setRouteToRunner] = useState(null);
+  const MAX_DISTANCE = 6; // Maximum distance in kilometers
+
+  // Fetch current user data to determine relevance
+  useEffect(() => {
+    const fetchUserData = async () => {
+      try {
+        const userId = auth.currentUser?.uid;
+        if (!userId) return;
+
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        if (userDoc.exists()) {
+          setCurrentUserData(userDoc.data());
+        }
+      } catch (error) {
+        console.error('Error fetching user data:', error);
+      }
+    };
+
+    fetchUserData();
+  }, []);
 
   useEffect(() => {
     // Subscribe to available runners
@@ -107,27 +152,221 @@ const ClientInterface = () => {
       setAvailableRunners(runners);
     });
 
-    // Subscribe to all pending tasks instead of user-specific tasks
-    const tasksRef = collection(db, 'tasks');
-    const tasksQuery = query(tasksRef, where('status', '==', 'pending'));
-
-    const unsubscribeTasks = onSnapshot(tasksQuery, (snapshot) => {
-      const tasks = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })).filter(task => task.location?.coordinates?.latitude && task.location?.coordinates?.longitude);
-      
-      setUserTasks(tasks);
-    });
-
     return () => {
       unsubscribeRunners();
-      unsubscribeTasks();
     };
   }, []);
 
+  // Filter runners based on location, relevance, and service categories
+  useEffect(() => {
+    if (!userLocation) return;
+
+    const nearbyRunners = availableRunners.filter(runner => {
+      const distance = calculateDistance(
+        userLocation.latitude,
+        userLocation.longitude,
+        runner.coordinates.latitude,
+        runner.coordinates.longitude
+      );
+      
+      // Filter by distance and service categories
+      const isNearby = distance <= MAX_DISTANCE;
+      const hasMatchingServices = currentUserData?.preferredCategories 
+        ? runner.serviceCategories?.some(cat => 
+            currentUserData.preferredCategories.includes(cat)
+          )
+        : true;
+
+      return isNearby && hasMatchingServices;
+    });
+
+    setFilteredRunners(nearbyRunners);
+
+    // Update route if a runner is selected
+    if (selectedRunner) {
+      const runnerCoords = selectedRunner.coordinates;
+      // Simple straight line path - in a real app, you'd use a routing service
+      setRouteToRunner([
+        { latitude: userLocation.latitude, longitude: userLocation.longitude },
+        { latitude: runnerCoords.latitude, longitude: runnerCoords.longitude }
+      ]);
+    }
+  }, [userLocation, availableRunners, currentUserData, selectedRunner]);
+
+  const handleLocationUpdate = (location) => {
+    setUserLocation(location);
+  };
+
+  // Check runner availability and show booking confirmation
+  const checkAvailabilityAndBook = async (runner) => {
+    try {
+      // Validate runner data first
+      if (!runner || !runner.id) {
+        Alert.alert('Error', 'Invalid runner data. Please try again.');
+        return;
+      }
+  
+      // Real-time check of runner's current status
+      const runnerDoc = await getDoc(doc(db, 'runners', runner.id));
+      
+      if (!runnerDoc.exists()) {
+        Alert.alert('Runner Not Found', 'This runner is no longer available.');
+        setSelectedRunner(null);
+        setRouteToRunner(null);
+        return;
+      }
+      
+      const currentRunnerData = runnerDoc.data();
+  
+      if (!currentRunnerData.isAvailable) {
+        Alert.alert(
+          'Runner Unavailable',
+          'This runner is no longer available. Please select another runner.'
+        );
+        setSelectedRunner(null);
+        setRouteToRunner(null);
+        return;
+      }
+  
+      // Make sure we have valid coordinates for distance calculation
+      if (!userLocation || !runner.coordinates || 
+          !runner.coordinates.latitude || !runner.coordinates.longitude) {
+        Alert.alert('Location Error', 'Unable to determine location. Please try again.');
+        return;
+      }
+  
+      // Check if runner is within service area
+      const distance = calculateDistance(
+        userLocation.latitude,
+        userLocation.longitude,
+        runner.coordinates.latitude,
+        runner.coordinates.longitude
+      );
+  
+      if (distance > MAX_DISTANCE) {
+        Alert.alert(
+          'Outside Service Area',
+          'This runner is now outside your service area. Please select a closer runner.'
+        );
+        setSelectedRunner(null);
+        setRouteToRunner(null);
+        return;
+      }
+  
+      setSelectedRunner(runner);
+  
+      // Show booking confirmation dialog with safe default values
+      const runnerName = runner.name || 'Selected Runner';
+      const runnerRating = runner.rating ? runner.rating.toFixed(1) : '0.0';
+      const completedTasks = runner.completedTasks || 0;
+  
+      Alert.alert(
+        'Confirm Booking',
+        `Would you like to book ${runnerName}?\n\nRating: ${runnerRating}⭐\nCompleted Tasks: ${completedTasks}\nDistance: ${distance.toFixed(1)}km`,
+        [
+          {
+        text: 'Cancel',
+        style: 'cancel',
+        onPress: () => {
+          setSelectedRunner(null);
+          setRouteToRunner(null);
+          navigation.goBack(); // Navigate to previous screen
+        }
+          },
+          {
+        text: 'Book Now', 
+        onPress: () => initiateBooking(runner)
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error checking runner availability:', error);
+      Alert.alert('Error', 'Failed to check runner availability. Please try again.');
+      setSelectedRunner(null);
+      setRouteToRunner(null);
+    }
+  };
+
+  const initiateBooking = async (runner) => {
+    try {
+      // Check if there's an existing pending task for this runner and client
+      const tasksRef = collection(db, 'tasks');
+      const existingTaskQuery = query(
+        tasksRef,
+        where('runnerId', '==', runner.id),
+        where('clientId', '==', auth.currentUser.uid),
+        where('status', '==', 'pending')
+      );
+      
+      const existingTaskSnapshot = await getDocs(existingTaskQuery);
+      let taskId;
+      
+      if (!existingTaskSnapshot.empty) {
+        // Use existing task
+        taskId = existingTaskSnapshot.docs[0].id;
+      } else {
+        // Create a new task document only if one doesn't exist
+        const taskRef = doc(collection(db, 'tasks'));
+        taskId = taskRef.id;
+        
+        const newTask = {
+          id: taskId,
+          runnerId: runner.id,
+          clientId: auth.currentUser.uid,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          location: {
+            coordinates: {
+              latitude: userLocation.latitude,
+              longitude: userLocation.longitude
+            }
+          },
+        };
+      
+        await setDoc(taskRef, newTask);
+      }
+      
+      // Check if chat already exists for this task
+      const chatRef = doc(db, 'chats', taskId);
+      const chatDoc = await getDoc(chatRef);
+      
+      if (!chatDoc.exists()) {
+        // Create the chat collection only if it doesn't exist
+        await setDoc(chatRef, {
+          taskId: taskId,
+          runnerId: runner.id,
+          clientId: auth.currentUser.uid,
+          createdAt: serverTimestamp(),
+          lastMessage: null,
+          lastMessageTime: null
+        });
+      }
+  
+      Alert.alert(
+        'Booking Successful',
+        'Your booking has been confirmed. The runner will be notified.',
+        [{ 
+          text: 'OK',
+          onPress: () => {
+            setSelectedRunner(null);
+            setRouteToRunner(null);
+            // Navigate to chat screen
+            navigation.navigate('Chat', {
+              taskId: taskId,
+              runnerId: runner.id,
+              clientId: auth.currentUser.uid
+            });
+          }
+        }]
+      );
+    } catch (error) {
+      console.error('Error creating booking:', error);
+      Alert.alert('Error', 'Failed to create booking. Please try again.');
+    }
+  };
+
   return (
-    <BaseLocationTracker>
+    <BaseLocationTracker onLocationUpdate={handleLocationUpdate}>
       {(location) => (
         <View style={styles.container}>
           <MapView
@@ -146,35 +385,49 @@ const ClientInterface = () => {
               pinColor="#2196F3"
             />
 
-            {/* Available runners */}
-            {availableRunners.map((runner) => (
-              <Marker
-                key={runner.id}
-                coordinate={runner.coordinates}
-                title={runner.name}
-              >
-                <View style={styles.runnerMarker}>
-                  <Text style={styles.runnerName}>{runner.name}</Text>
-                  <Text style={styles.runnerRating}>⭐ {runner.rating?.toFixed(1) || '0.0'}</Text>
-                  <Text style={styles.runnerTasks}>{runner.completedTasks || 0} tasks</Text>
-                </View>
-              </Marker>
-            ))}
+            {/* Available runners (filtered) */}
+            {filteredRunners.map((runner) => {
+  // Skip invalid runner data
+              if (!runner || !runner.id || !runner.coordinates ||
+                !runner.coordinates.latitude || !runner.coordinates.longitude) {
+                return null;
+              }
 
-            {/* User's tasks */}
-            {userTasks.map((task) => (
-              <Marker
-                key={task.id}
-                coordinate={task.location.coordinates}
-                title={task.serviceName}
-              >
-                <View style={[styles.taskMarker, { borderColor: getStatusColor(task.status) }]}>
-                  <Text style={styles.taskTitle}>{task.serviceName}</Text>
-                  <Text style={styles.taskPrice}>KES {task.price}</Text>
-                  <Text style={styles.taskStatus}>{task.status}</Text>
-                </View>
-              </Marker>
-            ))}
+              return (
+                <Marker
+                  key={runner.id}
+                  coordinate={runner.coordinates}
+                  title={runner.name || 'Runner'}
+                  onPress={() => checkAvailabilityAndBook(runner)}
+                >
+                  <View style={styles.runnerMarker}>
+                    <Text style={styles.runnerName}>{runner.name || 'Runner'}</Text>
+                    <Text style={styles.runnerRating}>⭐ {runner.rating?.toFixed(1) || '0.0'}</Text>
+                    <Text style={styles.runnerTasks}>{runner.completedTasks || 0} tasks</Text>
+                    <Text style={styles.distanceText}>
+                      {calculateDistance(
+                        location.latitude,
+                        location.longitude,
+                        runner.coordinates.latitude,
+                        runner.coordinates.longitude
+                      ).toFixed(1)} km
+                    </Text>
+                  </View>
+                </Marker>
+              );
+            }
+
+            )}
+
+            {/* Path to selected runner */}
+            {routeToRunner && (
+              <Polyline
+                coordinates={routeToRunner}
+                strokeColor="#2196F3"
+                strokeWidth={3}
+                lineDashPattern={[1]}
+              />
+            )}
           </MapView>
 
           {/* Back Button */}
@@ -192,11 +445,13 @@ const ClientInterface = () => {
 
           <View style={styles.overlay}>
             <Text style={styles.overlayText}>
-              Available Runners: {availableRunners.length}
+              Available Runners : {filteredRunners.length}
             </Text>
-            <Text style={styles.overlayText}>
-              Active Tasks: {userTasks.filter(t => t.status === 'pending').length}
-            </Text>
+            {currentUserData?.preferredCategories && (
+              <Text style={styles.overlaySubtext}>
+                Showing runners matching your preferred services
+              </Text>
+            )}
           </View>
         </View>
       )}
@@ -208,7 +463,30 @@ const ClientInterface = () => {
 const RunnerInterface = () => {
   const navigation = useNavigation();
   const [availableTasks, setAvailableTasks] = useState([]);
+  const [filteredTasks, setFilteredTasks] = useState([]);
   const [isAvailable, setIsAvailable] = useState(true);
+  const [userLocation, setUserLocation] = useState(null);
+  const [runnerProfile, setRunnerProfile] = useState(null);
+  const MAX_DISTANCE = 6; // Maximum distance in kilometers
+
+  // Fetch runner profile to determine task appropriateness
+  useEffect(() => {
+    const fetchRunnerProfile = async () => {
+      try {
+        const runnerId = auth.currentUser?.uid;
+        if (!runnerId) return;
+
+        const runnerDoc = await getDoc(doc(db, 'runners', runnerId));
+        if (runnerDoc.exists()) {
+          setRunnerProfile(runnerDoc.data());
+        }
+      } catch (error) {
+        console.error('Error fetching runner profile:', error);
+      }
+    };
+
+    fetchRunnerProfile();
+  }, []);
 
   // Add the missing updateRunnerLocation function
   const updateRunnerLocation = async (coords) => {
@@ -216,6 +494,8 @@ const RunnerInterface = () => {
       // Assuming you have the current user's ID from authentication
       const runnerId = auth.currentUser?.uid;
       if (!runnerId) return;
+
+      setUserLocation(coords);
 
       const runnerRef = doc(db, 'runners', runnerId);
       await setDoc(runnerRef, {
@@ -248,8 +528,43 @@ const RunnerInterface = () => {
     return () => unsubscribe();
   }, []);
 
+  // Filter tasks by distance and appropriateness when tasks or location changes
+  useEffect(() => {
+    if (!userLocation || !availableTasks.length) return;
+
+    // Filter tasks by distance (within 6km)
+    const nearbyTasks = availableTasks.filter(task => {
+      const distance = calculateDistance(
+        userLocation.latitude,
+        userLocation.longitude,
+        task.location.coordinates.latitude,
+        task.location.coordinates.longitude
+      );
+      
+      return distance <= MAX_DISTANCE;
+    });
+
+    // Filter by task appropriateness if runner profile is available
+    const appropriateTasks = runnerProfile 
+      ? nearbyTasks.filter(task => {
+          // Example: Check if runner has skills matching the task category
+          // Replace with your actual appropriateness logic
+          return runnerProfile.skills && 
+                 task.category && 
+                 runnerProfile.skills.includes(task.category);
+        })
+      : nearbyTasks;
+
+    // Fall back to nearby tasks if no appropriate tasks found or no runner profile
+    setFilteredTasks(appropriateTasks.length > 0 ? appropriateTasks : nearbyTasks);
+  }, [userLocation, availableTasks, runnerProfile]);
+
   const toggleAvailability = async () => {
     setIsAvailable(!isAvailable);
+    // Update availability status in Firestore
+    if (userLocation) {
+      updateRunnerLocation(userLocation);
+    }
   };
 
   return (
@@ -272,8 +587,8 @@ const RunnerInterface = () => {
               pinColor="#4CAF50"
             />
 
-            {/* Available tasks */}
-            {availableTasks.map((task) => (
+            {/* Available tasks (filtered) */}
+            {filteredTasks.map((task) => (
               <Marker
                 key={task.id}
                 coordinate={task.location.coordinates}
@@ -283,6 +598,14 @@ const RunnerInterface = () => {
                   <Text style={styles.taskTitle}>{task.serviceName}</Text>
                   <Text style={styles.taskPrice}>KES {task.price}</Text>
                   <Text style={styles.taskCategory}>{task.category}</Text>
+                  <Text style={styles.distanceText}>
+                    {calculateDistance(
+                      location.latitude,
+                      location.longitude,
+                      task.location.coordinates.latitude,
+                      task.location.coordinates.longitude
+                    ).toFixed(1)} km
+                  </Text>
                   <Text style={styles.taskAddress} numberOfLines={2}>
                     {task.location.address}
                   </Text>
@@ -317,7 +640,10 @@ const RunnerInterface = () => {
               </Text>
             </TouchableOpacity>
             <Text style={styles.overlayText}>
-              Available Tasks: {availableTasks.length}
+              Available Tasks (within {MAX_DISTANCE}km): {filteredTasks.length}
+            </Text>
+            <Text style={styles.overlaySubtext}>
+              {runnerProfile?.skills ? 'Showing tasks matching your skills' : 'Showing all nearby tasks'}
             </Text>
           </View>
         </View>
@@ -483,6 +809,13 @@ const styles = StyleSheet.create({
     color: '#333',
     marginVertical: 2,
   },
+  overlaySubtext: {
+    fontSize: 14,
+    textAlign: 'center',
+    color: '#666',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
   runnerMarker: {
     backgroundColor: 'white',
     padding: 8,
@@ -502,6 +835,12 @@ const styles = StyleSheet.create({
   runnerTasks: {
     fontSize: 11,
     color: '#666',
+  },
+  distanceText: {
+    fontSize: 11,
+    color: '#2196F3',
+    fontWeight: 'bold',
+    marginTop: 4,
   },
   taskMarker: {
     backgroundColor: 'white',
@@ -609,7 +948,6 @@ const styles = StyleSheet.create({
     color: '#000',
     fontWeight: '500',
   },
-
 });
 
 export default LocationTracker;

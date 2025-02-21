@@ -287,7 +287,7 @@ const ErrandDashboard = () => {
             color="#6b7280"
             onPress={() => navigation.navigate('HomePage')} 
           />
-          <MaterialCommunityIcons name="account-group" size={26} color="#6b7280" />
+          <MaterialCommunityIcons name="account-group" size={26} color="#6b7280" onPress={() => navigation.navigate('Chat')} />
           <MaterialCommunityIcons name="wallet" size={26} color="#6b7280" />
           <MaterialCommunityIcons name="cog" size={26} color="#6b7280" />
         </View>
